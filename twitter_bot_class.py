@@ -6,7 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import datetime
-from utils import write_csv, read_csv, scrollDown
+from utils import *
 import numpy as np
 from TwitterUser import *
 
@@ -23,6 +23,8 @@ prefs = {
         'notifications' : 2
     }
 }
+# 保持页面登录状态
+option.add_argument(r'user-data-dir=C:\Users\LY\AppData\Local\Google\Chrome\User Data')
 option.add_experimental_option('prefs', prefs)
 driver = webdriver.Chrome(chrome_options=option)
 driver.implicitly_wait(30)
@@ -64,12 +66,15 @@ class TwitterBot:
     """
     
 
-    def __init__(self, email, password, userName, maxScrollDownTimes):
+    def __init__(self, email, password, userName, maxScrollDownTimes, outputTweetsPath, urlPrefix, translateTargetLanguage):
         self.email = email
         self.password = password
         self.userName = userName
         self.bot = driver
+        self.outputTweetsPath = outputTweetsPath
         self.maxScrollDownTimes = maxScrollDownTimes
+        self.urlPrefix = urlPrefix
+        self.translateTargetLanguage = translateTargetLanguage
         self.is_logged_in = False
 
 
@@ -151,21 +156,69 @@ class TwitterBot:
         time.sleep(3) 
         self.is_logged_in = False
 
+
+    # usersList为[realcaixia, JoeBiden]
+    # 返回[Tweets]
+    def getAndWriteUserTweets(self, usersList, outputTweetsPath):
+        bot = self.bot
+        TweetsList = []
+        for user in usersList:
+            userPage = self.urlPrefix + user
+            bot.get(userPage)
+            time.sleep(3)
+            scrollDown(bot)
+            thisUserTweetsList = getUserTweets(bot, user)
+            print(len(thisUserTweetsList))
+            writeTweetsToCSV(thisUserTweetsList, outputTweetsPath)
+            print('----------------------正在写入----------------------')
+            TweetsList.append(thisUserTweetsList)
+        print('全部一级用户Tweets已写入外部文件')
+        return TweetsList
+
+    # 输入usersList为一级用户List
+    # 二级用户即给一级用户点赞评论的用户
+    def getSecondLevelUsers(self, usersList):
+        bot = self.bot
+        SecondLevelUsers = []
+        for user in usersList:
+            # 进入当前用户主页
+            userPage = self.urlPrefix + user
+            bot.get(userPage)
+            scrollDown(bot)
+            time.sleep(3)
+
+            articlesLink, articlesLikesLink = getUserTweetsAndLikesLink(bot)
+            for articlesLink, articlesLike in zip(articlesLink, articlesLikesLink):
+                # 获取评论用户
+                bot.get(articlesLink)
+                scrollDown(bot)
+                time.sleep(3)
+                commentUsers = getCommentUsers(bot, user)
+
+                # 获取点赞用户
+                bot.get(articlesLike)
+                scrollDown(bot)
+                time.sleep(3)
+
+                likeUsers = getLikeUser(bot, user)
+                SecondLevelUsers.extend([item for item in likeUsers])
+                SecondLevelUsers.extend([item for item in commentUsers])
+            # 去重
+        return list(set(SecondLevelUsers))
+                
+        #     # 从articlesLink中检索评论用户
+
+
+
     # https://twitter.com/JoeBiden 后边为用户id
     # 获取给用户userId近期推文点赞的用户id，返回list
     def searchLikesUsers(self, userId='', outputPath=''):
         bot = self.bot
-        # 进入该用户（caixia）主页
         personPage = 'https://twitter.com/' + userId
         bot.get(personPage)
 
-        # scrollJs = "window.scrollTo(0,1000)"
-        # bot.execute_script(scrollJs)
 
         time.sleep(5)
-        # 获取该用户（caixia）推文列表
-        # articleList = bot.find_elements(By.XPATH, r'//div[@class="css-1dbjc4n r-1iusvr4 r-16y2uox r-1777fci r-kzbkwu"]')
-        # print(len(articleList))
         articleList = bot.find_elements(By.XPATH, r'//a[@class="css-4rbku5 css-18t94o4 css-901oao r-14j79pv r-1loqt21 r-xoduu5 r-1q142lx r-1w6e6rj r-37j5jr r-a023e6 r-16dba41 r-9aw3ui r-rjixqe r-bcqeeo r-3s2u2q r-qvutc0"]')
         urls_before = articleList
         # urls_before = articleList.find_elements(By.XPATH, r'//a')
@@ -201,6 +254,7 @@ class TwitterBot:
         # urlLike = urlTest + '/' + 'likes'
         # bot.get(urlLike)
         # time.sleep(5)
+
     # userIdList中的userId均以@开头
     # https://twitter.com/userId为该用户主页
     def searchForLikesUsersTweetsAndLocation(self, userIdsPath):
@@ -309,30 +363,19 @@ class TwitterBot:
         print(userList)
         return 
 
-
-    def searchforKeys(self, query='', outputPath=''):
-        # if not self.is_logged_in:
-        #     raise Exception("You must log in first!")
-
+# person = realcaixia
+    def test(self, person):
         bot = self.bot
-        searchURL = 'https://twitter.com/search?q=' + query + '&src=typed_query&f=live'
-        bot.get(searchURL)
-        articleList = bot.find_elements(By.XPATH, r'//div[@class="css-1dbjc4n r-1iusvr4 r-16y2uox r-1777fci r-kzbkwu"]/div[2]')
-        textList = []
-        for _, article in enumerate(articleList):
-            articleSpan = article.find_elements(By.TAG_NAME, r'span')
-            text = ''
-            for _, span in enumerate(articleSpan):
-                articleText = span.get_attribute('innerHTML')
-                if articleText.startswith('<') or articleText.startswith('@') :
-                    articleText = ''
-                text += articleText
-                text = text.strip()
-                text += ' '
-            text = text.strip()
-            textList.append(text)
-        write_csv(textList, outputPath)
-        time.sleep(10)  
+        url = 'https://twitter.com/' + person
+        bot.get(url)
+        time.sleep(5)
+        scrollDown(bot)
+        time.sleep(3)
+        ThisUserTweets = getUserTweets(bot, person)
+        print(len(ThisUserTweets))
+
+    
+        
 
 
     def like_tweets(self, cycles=10):
